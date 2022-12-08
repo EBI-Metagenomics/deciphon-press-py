@@ -58,16 +58,18 @@ async def output_handler(proc: trio.Process, send_ch):
     print("exiting output handler")
 
 
-async def signal_handler(send_ch):
+async def signal_handler(send_ch, task_status=trio.TASK_STATUS_IGNORED):
     async with send_ch:
-        with trio.open_signal_receiver(SIGTERM, SIGINT) as it:
-            async for signum in it:
-                if signum == SIGTERM:
-                    await send_ch.send("sigterm")
-                    break
-                if signum == SIGINT:
-                    await send_ch.send("sigint")
-                    break
+        with trio.CancelScope() as scope:
+            with trio.open_signal_receiver(SIGTERM, SIGINT) as it:
+                task_status.started(scope)
+                async for signum in it:
+                    if signum == SIGTERM:
+                        await send_ch.send("sigterm")
+                        break
+                    if signum == SIGINT:
+                        await send_ch.send("sigint")
+                        break
     print("exiting signal handler")
 
 
@@ -84,7 +86,7 @@ async def boss(pressy: str, workdir: Path, hmm_file: str):
             assert isinstance(proc, trio.Process)
             nursery.start_soon(partial(input_handler, proc, task_recv_ch))
             nursery.start_soon(partial(output_handler, proc, watch_send_ch.clone()))
-            nursery.start_soon(partial(signal_handler, watch_send_ch.clone()))
+            sighdl = await nursery.start(partial(signal_handler, watch_send_ch.clone()))
 
             await task_send_ch.send(f"press {hmm_file}")
             monitor = await nursery.start(partial(tickle, proc, task_send_ch.clone()))
@@ -94,11 +96,15 @@ async def boss(pressy: str, workdir: Path, hmm_file: str):
 
                 if msg == "sigint" or msg == "sigterm":
                     monitor.cancel()
+                    sighdl.cancel()
                     await task_send_ch.send("quit")
                     break
 
                 if msg.startswith("done"):
-                    print("done")
+                    monitor.cancel()
+                    sighdl.cancel()
+                    await task_send_ch.send("quit")
+                    break
                 if msg.startswith("fail"):
                     print("fail")
                 if msg.startswith("run"):
@@ -113,3 +119,8 @@ async def boss(pressy: str, workdir: Path, hmm_file: str):
 async def single_press(workdir: Path, hmm_file):
     with pressy_file() as pressy:
         await boss(str(pressy), workdir, hmm_file)
+
+
+async def start_server():
+    with pressy_file() as pressy:
+        await boss(str(pressy))
