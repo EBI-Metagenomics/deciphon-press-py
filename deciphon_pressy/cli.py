@@ -4,13 +4,20 @@ from pathlib import Path
 import typer
 
 from deciphon_pressy.pressy import create_pressy
+from deciphon_pressy.server import create_server
 
 app = typer.Typer()
 
 
 @app.command()
 def server():
-    pass
+    # async def main():
+    create_server()
+    # async with create_server() as srv:
+    #     await srv.wait()
+    # raise typer.Exit(srv.result.value)
+
+    # asyncio.run(main())
 
 
 @app.command()
