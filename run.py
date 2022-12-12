@@ -1,3 +1,4 @@
+import threading
 from functools import lru_cache
 from subprocess import PIPE, Popen
 
@@ -35,9 +36,28 @@ def get_config() -> Config:
 config = get_config()
 
 
-def press_hmm(filename: str):
-    proc = Popen([BIN, filename], stdout=PIPE)
+def fire_and_forget(f):
+    def wrapped():
+        threading.Thread(target=f).start()
+
+    return wrapped
+
+
+def patch(path: str):
+    hdrs = {
+        "Accept": "application/json",
+        "X-API-KEY": config.api_key,
+    }
+    try:
+        return requests.patch(url(path), headers=hdrs)
+    except ConnectionError as conn_error:
+        print(conn_error)
+
+
+def press_hmm(hmm_file: str, job_id: int):
+    proc = Popen([BIN, hmm_file], stdout=PIPE)
     assert proc.stdout
+    last_progress = 0
     for raw_line in proc.stdout:
         line = raw_line.decode().strip()
         if line == "done":
@@ -45,8 +65,17 @@ def press_hmm(filename: str):
         elif line == "fail":
             print(line)
         else:
-            progress = line.replace("%", "")
-            print(progress)
+            cur_progress = int(line.replace("%", ""))
+            if cur_progress > last_progress:
+                inc = cur_progress - last_progress
+
+                @fire_and_forget
+                def send_update():
+                    patch(f"/jobs/{job_id}/progress/increment/{inc}")
+
+                send_update()
+                last_progress = cur_progress
+                print(cur_progress)
 
     exit_code = proc.wait()
     print(f"exitcode: {exit_code}")
@@ -123,9 +152,10 @@ def process_request(hmm, message):
         print(hmm)
         hmm_id = hmm["id"]
         hmm_file = hmm["filename"]
+        job_id = hmm["job_id"]
         download(f"/hmms/{hmm_id}/download", hmm_file)
         print("Download finished")
-        press_hmm(hmm_file)
+        press_hmm(hmm_file, job_id)
 
         mime = "application/octet-stream"
         db_file = hmm_file.replace(".hmm", ".dcp")
@@ -133,6 +163,7 @@ def process_request(hmm, message):
         message.ack()
     except Exception as e:
         print(e)
+        message.ack()
 
 
 def create_server():
