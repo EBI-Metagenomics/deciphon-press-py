@@ -153,6 +153,9 @@ def process_request(hmm, message):
         hmm_id = hmm["id"]
         hmm_file = hmm["filename"]
         job_id = hmm["job_id"]
+
+        patch(f"/jobs/{job_id}/set-run")
+
         download(f"/hmms/{hmm_id}/download", hmm_file)
         print("Download finished")
         press_hmm(hmm_file, job_id)
